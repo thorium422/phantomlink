@@ -3,6 +3,7 @@ use libc::{setns, CLONE_NEWNET};
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::phork::utils::*;
 use crate::phork::veth::VEth;
@@ -63,6 +64,9 @@ pub(crate) fn setup() -> eyre::Result<()> {
         veth.disable_offload()?;
         veth.set_default_route()?;
     }
+
+    // Create qdisc veth pairs for each link
+    setup_qdisc_veths()?;
 
     // assuming the default namespace is the one with ID 1
     let ns_id = 1;
@@ -147,4 +151,60 @@ impl Namespace {
     fn path(&self) -> PathBuf {
         Path::new(&format!("/var/run/netns/{}", self.name)).to_path_buf()
     }
+}
+
+fn setup_qdisc_veths() -> eyre::Result<()> {
+    let qdisc_veths = ["pqueue0", "pqueue1"];
+
+    for veth_name in &qdisc_veths {
+        let peer_name = format!("{}_peer", veth_name);
+
+        let _ = Command::new("ip")
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "del", veth_name])
+            .output();
+
+        Command::new("ip")
+            .args([
+                "netns",
+                "exec",
+                NS_NAME_LINK,
+                "ip",
+                "link",
+                "add",
+                veth_name,
+                "type",
+                "veth",
+                "peer",
+                "name",
+                &peer_name,
+            ])
+            .status()?;
+
+        Command::new("ip")
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", veth_name, "up"])
+            .status()?;
+
+        Command::new("ip")
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &peer_name, "up"])
+            .status()?;
+
+        Command::new("ip")
+            .args([
+                "netns",
+                "exec",
+                NS_NAME_LINK,
+                "tc",
+                "qdisc",
+                "add",
+                "dev",
+                veth_name,
+                "root",
+                "pfifo",
+                "limit",
+                "1000",
+            ])
+            .status()?;
+    }
+
+    Ok(())
 }

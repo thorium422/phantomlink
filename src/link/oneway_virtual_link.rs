@@ -13,13 +13,13 @@ use spin_sleep::SpinSleeper;
 use thread_priority::{set_current_thread_priority, ThreadPriority};
 use uom::si::{
     f64::{Information, InformationRate, Time},
-    information::{bit, kilobyte},
+    information::kilobyte,
     information_rate::megabit_per_second,
     time::microsecond,
 };
 
 use crate::{
-    byte_bounded_channel::byte_bounded_channel, cli::StartupMode, inflight_queue::InflightQueue, route_metrics::RouteMetricQueue,
+    cli::StartupMode, inflight_queue::InflightQueue, queue::qdisc_wrapper::qdisc_channel, route_metrics::RouteMetricQueue,
     runtime::Runtime, ReconfigurationMode,
 };
 
@@ -91,9 +91,8 @@ impl OnewayVirtualLink {
         let mut route_id = rdp.route_id;
         let inflight_queue = Arc::new((Mutex::new(InflightQueue::new(self.link_id, delay)), Condvar::new()));
 
-        // create ByteBoundedChannel
-        let channel_size: Information = self.calculate_bottleneck_buffer_size(btldr, delay);
-        let (sender, receiver, channel_handle) = byte_bounded_channel(Information::new::<bit>(channel_size.get::<bit>()));
+        // let channel_size: Information = self.calculate_bottleneck_buffer_size(btldr, delay);
+        let (sender, receiver, _qdisc_handle) = qdisc_channel(&format!("pqueue{}", self.link_id))?;
 
         // create & start drainer
         let drainer = Arc::new(Drainer::new(self.link_id, self.startup_mode, sender));
@@ -105,7 +104,7 @@ impl OnewayVirtualLink {
 
         // create & start pacer
         let pacer = Arc::new(Pacer::create(route_id, receiver, inflight_queue.clone(), btldr, delay));
-        let pacer_clone: Arc<Pacer> = pacer.clone();
+        let pacer_clone: Arc<Pacer<_>> = pacer.clone();
         let core_id_pacer = self.core_config.as_ref().map(|cfg| cfg.core_id_pacer);
         let thread_pacer = thread::spawn(move || {
             pacer_clone.run(core_id_pacer);
@@ -173,9 +172,6 @@ impl OnewayVirtualLink {
                     }
                     // GSL (Deliverer: Satellite - Ground)
                     deliverer_reconfig_until.store(Some(Instant::now() + reconfiguration_delay));
-
-                    let new_channel_size: Information = self.calculate_bottleneck_buffer_size(btldr, delay);
-                    channel_handle.update_capacity(new_channel_size);
                 }
             }
         }
@@ -186,6 +182,7 @@ impl OnewayVirtualLink {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn calculate_bottleneck_buffer_size(&self, datarate: InformationRate, delay: Duration) -> Information {
         let bdp: Information = Self::calculate_bdp(datarate, delay);
         let buffer_size: Information = bdp * self.buffer_size_multiplier;

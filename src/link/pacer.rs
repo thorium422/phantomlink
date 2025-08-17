@@ -18,8 +18,8 @@ use uom::si::{
 };
 
 use crate::{
-    byte_bounded_channel::ByteReceiver,
     inflight_queue::{InflightQueue, ScheduleResult},
+    queue::common::QueueChannelReceiver,
 };
 
 struct DataRateCell {
@@ -42,19 +42,19 @@ impl DataRateCell {
     }
 }
 
-pub struct Pacer {
+pub struct Pacer<T: QueueChannelReceiver> {
     route_id: AtomicU64,
-    buffer: ByteReceiver,
+    buffer: T,
     link: Arc<(Mutex<InflightQueue>, Condvar)>,
     btldr: DataRateCell,
     delay: AtomicU64,
     reconfigure_until: AtomicCell<Option<Instant>>,
 }
 
-impl Pacer {
+impl<T: QueueChannelReceiver> Pacer<T> {
     pub fn create(
         route_id: u64,
-        buffer: ByteReceiver,
+        buffer: T,
         link: Arc<(Mutex<InflightQueue>, Condvar)>,
         initial_btldr: InformationRate,
         initial_delay: Duration,

@@ -33,7 +33,11 @@ mod link {
     pub mod oneway_virtual_link;
     pub mod pacer;
 }
-mod byte_bounded_channel;
+mod queue {
+    pub mod byte_bounded_channel;
+    pub mod common;
+    pub mod qdisc_wrapper;
+}
 mod phork {
     pub mod namespace;
     mod utils;
