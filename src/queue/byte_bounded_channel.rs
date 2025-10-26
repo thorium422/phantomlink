@@ -1,29 +1,12 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::{sync::Arc, time::Duration};
+#![allow(dead_code)]
 
+use crate::queue::common::{Bytes, QueueChannelReceiver, QueueChannelSender, RecvTimeoutError, TrySendError};
 use crossbeam::channel::{unbounded, Receiver, Sender};
 use log::debug;
-use thiserror::Error;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::{sync::Arc, time::Duration};
 use uom::si::information::kilobyte;
 use uom::si::{f64::Information, information::byte};
-
-type Bytes = Vec<u8>;
-
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum TrySendError {
-    #[error("channel is full")]
-    ChannelFullError,
-    #[error("channel is disconnected")]
-    ChannelDisconnected,
-}
-
-#[derive(Error, Debug, PartialEq, Eq)]
-pub enum RecvTimeoutError {
-    #[error("recv timeout")]
-    Timeout,
-    #[error("channel is disconnected")]
-    ChannelDisconnected,
-}
 
 pub struct ByteCell {
     len: AtomicU64,
@@ -63,8 +46,8 @@ pub struct ByteSender {
     sender: Sender<Bytes>,
 }
 
-impl ByteSender {
-    pub fn try_send(&self, data: Bytes) -> Result<(), TrySendError> {
+impl QueueChannelSender for ByteSender {
+    fn try_send(&self, data: Bytes) -> Result<(), TrySendError> {
         let data_len: Information = Information::new::<byte>(data.len() as f64);
 
         let channel_len = self.len.load();
@@ -92,8 +75,8 @@ pub struct ByteReceiver {
     receiver: Receiver<Bytes>,
 }
 
-impl ByteReceiver {
-    pub fn recv_timeout(&self, timeout: Duration) -> Result<Bytes, RecvTimeoutError> {
+impl QueueChannelReceiver for ByteReceiver {
+    fn recv_timeout(&self, timeout: Duration) -> Result<Bytes, RecvTimeoutError> {
         let data = match self.receiver.recv_timeout(timeout) {
             Ok(data) => Ok(data),
             Err(e) => match e {
