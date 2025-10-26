@@ -25,13 +25,36 @@ pub enum Commands {
     #[command(about = "Execute a command in the virtual link environment")]
     Exec(ExecArgs),
     #[command(about = "Setup the network environment")]
-    Setup,
+    Setup(SetupArgs),
     #[command(about = "Tear down the network environment")]
     Teardown,
     #[command(about = "Start the socket stats logger")]
     SocketStats(SocketstatsArgs),
     #[command(about = "Generate shell completions")]
     Generate(GenerateArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct SetupArgs {
+    #[arg(
+        long = "qdisc-client",
+        short = 'c',
+        help = "The arguments to pass to the qdisc for the client",
+        required = false,
+        num_args = 1..,
+        value_delimiter = ' ',
+        default_values_t = vec!["pfifo".to_string(), "limit".to_string(), "1000".to_string()])
+    ]
+    pub qdisc_client_config: Vec<String>,
+    #[arg(
+        long = "qdisc-server",
+        short = 's',
+        help = "The arguments to pass to the qdisc for the server",
+        num_args = 1..,
+        value_delimiter = ' ',
+        default_values_t = vec!["pfifo".to_string(), "limit".to_string(), "1000".to_string()])
+    ]
+    pub qdisc_server_config: Vec<String>,
 }
 
 #[derive(Args, Debug)]

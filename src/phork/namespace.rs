@@ -26,7 +26,7 @@ pub(crate) fn is_setup() -> eyre::Result<bool> {
 }
 
 /// Sets up the network namespaces and virtual ethernet links for the phork environment.
-pub(crate) fn setup() -> eyre::Result<()> {
+pub(crate) fn setup(qdisc_client_config: Vec<String>, qdisc_server_config: Vec<String>) -> eyre::Result<()> {
     // create namespaces
     for ns in NAMESPACES {
         Namespace::try_create(ns)?;
@@ -66,7 +66,10 @@ pub(crate) fn setup() -> eyre::Result<()> {
     }
 
     // Create qdisc veth pairs for each link
-    setup_qdisc_veths()?;
+    setup_qdisc_veths(
+        qdisc_client_config.iter().map(|x| x.as_str()).collect(),
+        qdisc_server_config.iter().map(|x| x.as_str()).collect(),
+    )?;
 
     // assuming the default namespace is the one with ID 1
     let ns_id = 1;
@@ -153,16 +156,19 @@ impl Namespace {
     }
 }
 
-fn setup_qdisc_veths() -> eyre::Result<()> {
-    let qdisc_veths = ["pqueue0", "pqueue1"];
+fn setup_qdisc_veths(qdisc_client_config: Vec<&str>, qdisc_server_config: Vec<&str>) -> eyre::Result<()> {
+    let qdisc_veths = [("pqueue0", qdisc_client_config), ("pqueue1", qdisc_server_config)];
 
-    for veth_name in &qdisc_veths {
-        let peer_name = format!("{}_peer", veth_name);
+    for (veth_name, qdisc_config) in &qdisc_veths {
+        let in_name = format!("{}_in", veth_name);
+        let out_name = format!("{}_out", veth_name);
 
+        // Cleanup existing interface if it exists
         let _ = Command::new("ip")
-            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "del", veth_name])
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "del", &in_name])
             .output();
 
+        // Create veth pair
         Command::new("ip")
             .args([
                 "netns",
@@ -171,39 +177,27 @@ fn setup_qdisc_veths() -> eyre::Result<()> {
                 "ip",
                 "link",
                 "add",
-                veth_name,
+                &in_name,
                 "type",
                 "veth",
                 "peer",
                 "name",
-                &peer_name,
+                &out_name,
             ])
             .status()?;
 
         Command::new("ip")
-            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", veth_name, "up"])
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &in_name, "up"])
             .status()?;
 
         Command::new("ip")
-            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &peer_name, "up"])
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &out_name, "up"])
             .status()?;
 
-        Command::new("ip")
-            .args([
-                "netns",
-                "exec",
-                NS_NAME_LINK,
-                "tc",
-                "qdisc",
-                "add",
-                "dev",
-                veth_name,
-                "root",
-                "pfifo",
-                "limit",
-                "1000",
-            ])
-            .status()?;
+        let mut qdisc_args = vec!["netns", "exec", NS_NAME_LINK, "tc", "qdisc", "add", "dev", &in_name, "root"];
+        qdisc_args.extend_from_slice(qdisc_config);
+
+        Command::new("ip").args(qdisc_args).status()?;
     }
 
     Ok(())

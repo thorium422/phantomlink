@@ -91,7 +91,6 @@ impl OnewayVirtualLink {
         let mut route_id = rdp.route_id;
         let inflight_queue = Arc::new((Mutex::new(InflightQueue::new(self.link_id, delay)), Condvar::new()));
 
-        // let channel_size: Information = self.calculate_bottleneck_buffer_size(btldr, delay);
         let (sender, receiver, _qdisc_handle) = qdisc_channel(&format!("pqueue{}", self.link_id))?;
 
         // create & start drainer
