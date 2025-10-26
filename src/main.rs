@@ -65,7 +65,7 @@ fn main() -> Result<()> {
         cli::opt::Commands::Start(start_args) => start::run(start_args)?,
         cli::opt::Commands::SocketStats(socketstats_args) => socketstats::run(socketstats_args)?,
         cli::opt::Commands::Generate(generate_args) => generator::run(generate_args)?,
-        cli::opt::Commands::Setup => setup::run()?,
+        cli::opt::Commands::Setup(setup_args) => setup::run(setup_args)?,
         cli::opt::Commands::Teardown => teardown::run()?,
         cli::opt::Commands::Exec(exec_args) => exec::run(exec_args)?,
     }

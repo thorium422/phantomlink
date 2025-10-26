@@ -39,15 +39,17 @@ impl QueueChannelReceiver for QdiscReceiver {
 
 pub struct QdiscHandle {}
 
-pub fn qdisc_channel(interface_name: &str) -> Result<(QdiscSender, QdiscReceiver, QdiscHandle)> {
-    let peer_name = format!("{}_peer", interface_name);
-    let (tx_to_veth, rx_from_veth) = unbounded::<Bytes>();
-    let (tx_from_peer, rx_from_peer) = unbounded::<Bytes>();
+pub fn qdisc_channel(veth_name: &str) -> Result<(QdiscSender, QdiscReceiver, QdiscHandle)> {
+    // Takes care of passing incoming packets from the caller to qdisc
+    let (tx_to_veth, rx_to_veth) = unbounded::<Bytes>();
+    // Takes care of passing packets from qdisc back to the caller
+    // TODO: Make this bounded size 1/0 & make sure pacer receives packets only if it can consume them
+    let (tx_from_veth, rx_from_veth) = unbounded::<Bytes>();
 
-    let veth_interface = interface_name.to_string();
-    let veth_interface_clone = veth_interface.clone();
-    let _peer_interface = peer_name.clone();
+    let veth_interface_in = format!("{}_in", veth_name);
+    let veth_interface_out = format!("{}_out", veth_name);
 
+    // Pass incoming packets from the caller to qdisc
     std::thread::spawn(move || {
         let config = Config {
             write_buffer_size: 4096,
@@ -62,21 +64,19 @@ pub fn qdisc_channel(interface_name: &str) -> Result<(QdiscSender, QdiscReceiver
         };
 
         let interfaces = datalink::interfaces();
-        let veth_iface = interfaces
-            .into_iter()
-            .find(|iface| iface.name == veth_interface)
-            .expect("Could not find veth interface");
+        let veth_iface = interfaces.into_iter().find(|iface| iface.name == veth_interface_in).unwrap();
 
         let (mut tx_veth, _) = match datalink::channel(&veth_iface, config) {
             Ok(Channel::Ethernet(tx, _)) => (tx, ()),
             _ => panic!("Failed to create channel to veth interface"),
         };
 
-        while let Ok(packet) = rx_from_veth.recv() {
+        while let Ok(packet) = rx_to_veth.recv() {
             let _ = tx_veth.send_to(&packet, None);
         }
     });
 
+    // Pass packets from qdisc back to the caller
     std::thread::spawn(move || {
         let config = Config {
             write_buffer_size: 4096,
@@ -91,10 +91,7 @@ pub fn qdisc_channel(interface_name: &str) -> Result<(QdiscSender, QdiscReceiver
         };
 
         let interfaces = datalink::interfaces();
-        let veth_iface = interfaces
-            .into_iter()
-            .find(|iface| iface.name == veth_interface_clone)
-            .expect("Could not find veth interface");
+        let veth_iface = interfaces.into_iter().find(|iface| iface.name == veth_interface_out).unwrap();
 
         let (_, mut rx_veth) = match datalink::channel(&veth_iface, config) {
             Ok(Channel::Ethernet(_, rx)) => ((), rx),
@@ -102,13 +99,13 @@ pub fn qdisc_channel(interface_name: &str) -> Result<(QdiscSender, QdiscReceiver
         };
 
         while let Ok(packet) = rx_veth.next() {
-            let _ = tx_from_peer.send(packet.to_vec());
+            let _ = tx_from_veth.send(packet.to_vec());
         }
     });
 
     let qdisc_sender = QdiscSender { sender: tx_to_veth };
 
-    let qdisc_receiver = QdiscReceiver { receiver: rx_from_peer };
+    let qdisc_receiver = QdiscReceiver { receiver: rx_from_veth };
 
     let qdisc_handle = QdiscHandle {};
 
