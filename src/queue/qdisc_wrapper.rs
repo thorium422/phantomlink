@@ -1,4 +1,4 @@
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::{bounded, unbounded, Receiver, Sender};
 use eyre::Result;
 use pnet::datalink::{self, Channel, ChannelType, Config};
 use std::time::Duration;
@@ -43,8 +43,8 @@ pub fn qdisc_channel(veth_name: &str) -> Result<(QdiscSender, QdiscReceiver, Qdi
     // Takes care of passing incoming packets from the caller to qdisc
     let (tx_to_veth, rx_to_veth) = unbounded::<Bytes>();
     // Takes care of passing packets from qdisc back to the caller
-    // TODO: Make this bounded size 1/0 & make sure pacer receives packets only if it can consume them
-    let (tx_from_veth, rx_from_veth) = unbounded::<Bytes>();
+    // Make this bounded size 0 to make sure pacer receives packets only if it can immediately consume them
+    let (tx_from_veth, rx_from_veth) = bounded::<Bytes>(0);
 
     let veth_interface_in = format!("{}_in", veth_name);
     let veth_interface_out = format!("{}_out", veth_name);
