@@ -36,6 +36,7 @@ mod link {
 mod queue {
     pub mod byte_bounded_channel;
     pub mod common;
+    pub mod qdisc_shaper;
     pub mod qdisc_wrapper;
 }
 mod phork {

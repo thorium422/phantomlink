@@ -1,12 +1,26 @@
 use eyre;
 use libc::{setns, CLONE_NEWNET};
+use log::info;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::cli::opt::ShaperKind;
 use crate::phork::utils::*;
 use crate::phork::veth::VEth;
+
+/// Placeholder rate written into the HTB class at `setup` time. The runtime
+/// overwrites this on the first scenario tick, so any sensible value works.
+/// We pick 1 Gbit/s to make accidental no-runtime usage obviously
+/// over-provisioned rather than throttling.
+const HTB_PLACEHOLDER_RATE_KBIT: u32 = 1_000_000;
+/// Class id of the (only) HTB leaf class on `pqueueN_in`. The runtime locates
+/// it by this exact id, so don't change without updating
+/// `crate::queue::qdisc_shaper`.
+pub(crate) const HTB_LEAF_CLASSID: &str = "1:10";
+/// Handle of the AQM child qdisc under the HTB leaf class.
+pub(crate) const HTB_AQM_HANDLE: &str = "10:";
 
 pub const NS_NAME_LINK: &str = "pl_link";
 pub const NS_NAME_CLIENT: &str = "pl_client";
@@ -26,7 +40,12 @@ pub(crate) fn is_setup() -> eyre::Result<bool> {
 }
 
 /// Sets up the network namespaces and virtual ethernet links for the phork environment.
-pub(crate) fn setup(qdisc_client_config: Vec<String>, qdisc_server_config: Vec<String>) -> eyre::Result<()> {
+pub(crate) fn setup(
+    qdisc_client_config: Vec<String>,
+    qdisc_server_config: Vec<String>,
+    qdisc_client_shaper: ShaperKind,
+    qdisc_server_shaper: ShaperKind,
+) -> eyre::Result<()> {
     // create namespaces
     for ns in NAMESPACES {
         Namespace::try_create(ns)?;
@@ -69,6 +88,8 @@ pub(crate) fn setup(qdisc_client_config: Vec<String>, qdisc_server_config: Vec<S
     setup_qdisc_veths(
         qdisc_client_config.iter().map(|x| x.as_str()).collect(),
         qdisc_server_config.iter().map(|x| x.as_str()).collect(),
+        qdisc_client_shaper,
+        qdisc_server_shaper,
     )?;
 
     // assuming the default namespace is the one with ID 1
@@ -156,10 +177,18 @@ impl Namespace {
     }
 }
 
-fn setup_qdisc_veths(qdisc_client_config: Vec<&str>, qdisc_server_config: Vec<&str>) -> eyre::Result<()> {
-    let qdisc_veths = [("pqueue0", qdisc_client_config), ("pqueue1", qdisc_server_config)];
+fn setup_qdisc_veths(
+    qdisc_client_config: Vec<&str>,
+    qdisc_server_config: Vec<&str>,
+    qdisc_client_shaper: ShaperKind,
+    qdisc_server_shaper: ShaperKind,
+) -> eyre::Result<()> {
+    let qdisc_veths = [
+        ("pqueue0", qdisc_client_config, qdisc_client_shaper),
+        ("pqueue1", qdisc_server_config, qdisc_server_shaper),
+    ];
 
-    for (veth_name, qdisc_config) in &qdisc_veths {
+    for (veth_name, qdisc_config, shaper) in &qdisc_veths {
         let in_name = format!("{}_in", veth_name);
         let out_name = format!("{}_out", veth_name);
 
@@ -194,10 +223,69 @@ fn setup_qdisc_veths(qdisc_client_config: Vec<&str>, qdisc_server_config: Vec<&s
             .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &out_name, "up"])
             .status()?;
 
-        let mut qdisc_args = vec!["netns", "exec", NS_NAME_LINK, "tc", "qdisc", "add", "dev", &in_name, "root"];
-        qdisc_args.extend_from_slice(qdisc_config);
+        match shaper {
+            ShaperKind::None => {
+                let mut qdisc_args =
+                    vec!["netns", "exec", NS_NAME_LINK, "tc", "qdisc", "add", "dev", &in_name, "root"];
+                qdisc_args.extend_from_slice(qdisc_config);
+                Command::new("ip").args(qdisc_args).status()?;
+            }
+            ShaperKind::Htb => {
+                // See docs/qdisc-design-rationale.md: classless AQMs are no-ops as root in
+                // phantomlink's topology because the inner veth has no rate limit. We wrap
+                // them in an HTB shaper whose rate the scenario engine updates each tick.
+                let placeholder = format!("{}kbit", HTB_PLACEHOLDER_RATE_KBIT);
 
-        Command::new("ip").args(qdisc_args).status()?;
+                Command::new("ip")
+                    .args([
+                        "netns", "exec", NS_NAME_LINK, "tc", "qdisc", "add", "dev", &in_name, "root", "handle", "1:",
+                        "htb", "default", "10",
+                    ])
+                    .status()?;
+                Command::new("ip")
+                    .args([
+                        "netns",
+                        "exec",
+                        NS_NAME_LINK,
+                        "tc",
+                        "class",
+                        "add",
+                        "dev",
+                        &in_name,
+                        "parent",
+                        "1:",
+                        "classid",
+                        HTB_LEAF_CLASSID,
+                        "htb",
+                        "rate",
+                        &placeholder,
+                        "ceil",
+                        &placeholder,
+                    ])
+                    .status()?;
+                let mut aqm_args = vec![
+                    "netns",
+                    "exec",
+                    NS_NAME_LINK,
+                    "tc",
+                    "qdisc",
+                    "add",
+                    "dev",
+                    &in_name,
+                    "parent",
+                    HTB_LEAF_CLASSID,
+                    "handle",
+                    HTB_AQM_HANDLE,
+                ];
+                aqm_args.extend_from_slice(qdisc_config);
+                Command::new("ip").args(aqm_args).status()?;
+
+                info!(
+                    "Built HTB+AQM tree on {} (leaf classid {}, AQM handle {}, placeholder rate {}; runtime will update on each scenario tick)",
+                    in_name, HTB_LEAF_CLASSID, HTB_AQM_HANDLE, placeholder
+                );
+            }
+        }
     }
 
     Ok(())

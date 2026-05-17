@@ -121,6 +121,10 @@ impl<T: QueueChannelReceiver> Pacer<T> {
         self.btldr.store(new_btldr);
     }
 
+    pub fn current_datarate(&self) -> InformationRate {
+        self.btldr.load()
+    }
+
     pub fn update_delay(&self, new_delay: Duration) {
         let delay_ms: u64 = new_delay.as_millis().try_into().unwrap();
         debug!("Update delay to {}ms", delay_ms);

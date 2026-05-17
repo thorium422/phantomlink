@@ -19,8 +19,12 @@ use uom::si::{
 };
 
 use crate::{
-    cli::StartupMode, inflight_queue::InflightQueue, queue::qdisc_wrapper::qdisc_channel, route_metrics::RouteMetricQueue,
-    runtime::Runtime, ReconfigurationMode,
+    cli::StartupMode,
+    inflight_queue::InflightQueue,
+    queue::{qdisc_shaper, qdisc_wrapper::qdisc_channel},
+    route_metrics::RouteMetricQueue,
+    runtime::Runtime,
+    ReconfigurationMode,
 };
 
 use super::{deliverer::Deliverer, drainer::Drainer, pacer::Pacer};
@@ -91,6 +95,16 @@ impl OnewayVirtualLink {
         let mut route_id = rdp.route_id;
         let inflight_queue = Arc::new((Mutex::new(InflightQueue::new(self.link_id, delay)), Condvar::new()));
 
+        // Probe once whether setup built an HTB shaper on pqueueN_in. When it
+        // did, we mirror every pacer rate change onto the leaf class. When it
+        // didn't (the default), we leave the tc tree alone and behave exactly
+        // as before. See docs/qdisc-design-rationale.md for the design.
+        let has_htb_shaper = qdisc_shaper::has_htb_shaper(self.link_id);
+        if has_htb_shaper {
+            debug!("Link {}: HTB shaper detected on pqueue{}_in; slaving its rate to pacer", self.link_id, self.link_id);
+            qdisc_shaper::update_htb_rate(self.link_id, btldr);
+        }
+
         let (sender, receiver, _qdisc_handle) = qdisc_channel(&format!("pqueue{}", self.link_id))?;
 
         // create & start drainer
@@ -154,7 +168,23 @@ impl OnewayVirtualLink {
                     delay.as_millis(),
                     btldr.get::<megabit_per_second>().round()
                 );
-                pacer.update_datarate(btldr);
+                // Keep the qdisc as the narrower of (qdisc, pacer) throughout
+                // the transition so that the AQM keeps owning the drops:
+                //   - widening (new > current): pacer first, qdisc second
+                //   - narrowing/equal:           qdisc first, pacer second
+                // See docs/qdisc-design-rationale.md "How this preserves P3".
+                if has_htb_shaper {
+                    let current = pacer.current_datarate();
+                    if btldr > current {
+                        pacer.update_datarate(btldr);
+                        qdisc_shaper::update_htb_rate(self.link_id, btldr);
+                    } else {
+                        qdisc_shaper::update_htb_rate(self.link_id, btldr);
+                        pacer.update_datarate(btldr);
+                    }
+                } else {
+                    pacer.update_datarate(btldr);
+                }
                 pacer.update_delay(delay);
 
                 let new_route_id = route_metric.route_id;
@@ -171,6 +201,27 @@ impl OnewayVirtualLink {
                     }
                     // GSL (Deliverer: Satellite - Ground)
                     deliverer_reconfig_until.store(Some(Instant::now() + reconfiguration_delay));
+
+                    // Mirror the pacer's reconfiguration blackout onto the HTB
+                    // shaper. Without this, packets keep dequeueing through the
+                    // qdisc at the configured rate during the window, pile up on
+                    // the inner veth peer's rx queue (which the pacer stops
+                    // draining), and drop silently — re-introducing the
+                    // backpressure-decoupling failure mode the HTB wrapper exists
+                    // to avoid. See docs/qdisc-design-rationale.md P2.
+                    // The restore reads the pacer's current rate (not the rate
+                    // captured at switch time) so a scenario tick that fires
+                    // *during* the window is honoured rather than clobbered.
+                    if has_htb_shaper && !reconfiguration_delay.is_zero() {
+                        qdisc_shaper::freeze_htb(self.link_id);
+                        let link_id = self.link_id;
+                        let pacer_for_restore = pacer.clone();
+                        let window = reconfiguration_delay;
+                        thread::spawn(move || {
+                            thread::sleep(window);
+                            qdisc_shaper::update_htb_rate(link_id, pacer_for_restore.current_datarate());
+                        });
+                    }
                 }
             }
         }
