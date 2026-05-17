@@ -26,6 +26,7 @@ mkdir -p "$OUTDIR"
 # ECN-capable sender. Tokens mirror the examples in docs/running-qdiscs.md.
 QDISCS=(
     "pfifo:pfifo limit 1000"
+    "pfifo_head_drop:pfifo_head_drop limit 1000"
     "codel:codel target 5ms"
     "fq_codel:fq_codel limit 10240 target 5ms"
     "red:red limit 60000 min 5000 max 15000 avpkt 1000 burst 50"
