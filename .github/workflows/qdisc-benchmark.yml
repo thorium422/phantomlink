@@ -1,0 +1,100 @@
+name: qdisc-benchmark
+
+# Sweeps phantomlink across every AQM it supports under the new
+# --qdisc-*-shaper htb plumbing (see docs/qdisc-design-rationale.md) and
+# posts the results as a Markdown table to the run summary.
+#
+# Wall time budget per push: ~6-10 minutes (Rust cold build dominates).
+
+on:
+  push:
+    paths-ignore:
+      - '**/*.md'
+      - 'TODO.MD'
+      - 'LICENSE-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the same ref cancels the prior in-flight benchmark — we only
+# care about the latest commit's numbers, and parallel runs would each pay
+# the cold-build cost.
+concurrency:
+  group: qdisc-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: 🚦 AQM sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      DURATION: "20"   # seconds per AQM; 6 AQMs ⇒ ~2 min of iperf time
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iperf3 ethtool net-tools iproute2 python3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-qdisc-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-qdisc-${{ runner.os }}-
+
+      - name: Build phantomlink
+        run: cargo build
+
+      - name: Sanity-check kernel + capabilities
+        run: |
+          uname -a
+          # All AQMs we exercise were upstreamed by Linux 5.6; GHA's Ubuntu
+          # runners are well past that. List them to fail fast if a kernel
+          # were missing one.
+          for q in pfifo codel fq_codel red pie fq_pie; do
+              if ! modinfo "sch_$q" >/dev/null 2>&1 && \
+                 ! grep -q "$q" /proc/modules 2>/dev/null; then
+                  echo "warning: sch_$q not visible (may still be built-in)"
+              fi
+          done
+          # Setup-time peeks. tc + ip netns must work; everything else flows
+          # from there.
+          sudo ip netns add ci-probe
+          sudo ip netns del ci-probe
+
+      - name: Run AQM sweep
+        run: sudo -E env "PATH=$PATH" ./scripts/qdisc_ci_sweep.sh
+
+      - name: Generate Markdown table
+        if: always()
+        run: |
+          sudo chown -R "$USER:$USER" /tmp/qdisc_runs 2>/dev/null || true
+          mkdir -p /tmp/qdisc_runs
+          python3 scripts/qdisc_ci_table.py /tmp/qdisc_runs | tee /tmp/qdisc_table.md
+          {
+            echo ""
+            cat /tmp/qdisc_table.md
+            echo ""
+            echo "_Commit: \`${GITHUB_SHA}\` · raw logs in the **qdisc-runs** artifact below._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qdisc-runs
+          path: /tmp/qdisc_runs/
+          if-no-files-found: warn
