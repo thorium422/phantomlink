@@ -12,7 +12,7 @@ pub(crate) fn require_network_environment() -> eyre::Result<()> {
 
 /// Switches the current process to the specified network namespace.
 pub(crate) fn switch_network_environment(namespace: &str) -> eyre::Result<()> {
-    debug!("Switching to namespace: '{}'", namespace);
+    debug!("Switching to namespace: '{namespace}'");
     Namespace::try_load(namespace)
         .map_err(|e| eyre::eyre!("Failed to load namespace '{}': {}", namespace, e))?
         .try_switch_calling_pid_to_namespace()

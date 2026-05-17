@@ -19,7 +19,7 @@ impl<'a> VEth<'a> {
             namespace,
             ip,
             mac,
-            name_sim: format!("sim-{}", name),
+            name_sim: format!("sim-{name}"),
             ip_sim,
             mac_sim,
         }

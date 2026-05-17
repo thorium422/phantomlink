@@ -46,8 +46,8 @@ pub fn qdisc_channel(veth_name: &str) -> Result<(QdiscSender, QdiscReceiver, Qdi
     // Make this bounded size 0 to make sure pacer receives packets only if it can immediately consume them
     let (tx_from_veth, rx_from_veth) = bounded::<Bytes>(0);
 
-    let veth_interface_in = format!("{}_in", veth_name);
-    let veth_interface_out = format!("{}_out", veth_name);
+    let veth_interface_in = format!("{veth_name}_in");
+    let veth_interface_out = format!("{veth_name}_out");
 
     // Pass incoming packets from the caller to qdisc
     std::thread::spawn(move || {

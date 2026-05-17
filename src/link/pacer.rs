@@ -111,7 +111,7 @@ impl<T: QueueChannelReceiver> Pacer<T> {
     }
 
     pub fn switch_route(&self, new_route_id: u64, reconfiguration_delay: Duration) {
-        debug!("Update route_id to {}", new_route_id);
+        debug!("Update route_id to {new_route_id}");
         self.route_id.store(new_route_id, Ordering::Relaxed);
         self.reconfigure_until.store(Some(Instant::now() + reconfiguration_delay));
     }
@@ -127,7 +127,7 @@ impl<T: QueueChannelReceiver> Pacer<T> {
 
     pub fn update_delay(&self, new_delay: Duration) {
         let delay_ms: u64 = new_delay.as_millis().try_into().unwrap();
-        debug!("Update delay to {}ms", delay_ms);
+        debug!("Update delay to {delay_ms}ms");
         self.delay.store(delay_ms, Ordering::Relaxed);
     }
 }

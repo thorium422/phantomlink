@@ -16,8 +16,8 @@ pub struct RouteMetricQueue {
 
 impl RouteMetricQueue {
     pub fn try_load(path: &Path) -> Result<Self> {
-        debug!("Start loading data points from {:?}", path);
-        let file = File::open(path).with_context(|| format!("Failed to read from input path `{:?}`.", path))?;
+        debug!("Start loading data points from {path:?}");
+        let file = File::open(path).with_context(|| format!("Failed to read from input path `{path:?}`."))?;
         let mut rdr = csv::Reader::from_reader(file);
 
         let mut route_metrics = RouteMetricQueue {
@@ -28,7 +28,7 @@ impl RouteMetricQueue {
         for result in rdr.deserialize() {
             let record: RouteMetricRaw = result?;
             let route_metric: RouteMetric = record.into();
-            debug!("Found route_metric: {:?}", route_metric);
+            debug!("Found route_metric: {route_metric:?}");
             route_metrics.add_route_metric(route_metric)?;
         }
 

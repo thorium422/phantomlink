@@ -23,7 +23,7 @@ use crate::phork::namespace::{HTB_AQM_HANDLE, HTB_LEAF_CLASSID, NS_NAME_LINK};
 /// was invoked with `--qdisc-<dir>-shaper htb`. When false the runtime
 /// skips rate-update calls for this direction.
 pub fn has_htb_shaper(link_id: usize) -> bool {
-    let iface = format!("pqueue{}_in", link_id);
+    let iface = format!("pqueue{link_id}_in");
     let output = Command::new("ip")
         .args(["netns", "exec", NS_NAME_LINK, "tc", "qdisc", "show", "dev", &iface])
         .output();
@@ -43,7 +43,7 @@ pub fn has_htb_shaper(link_id: usize) -> bool {
             false
         }
         Err(e) => {
-            debug!("tc qdisc show on {} failed to spawn: {}", iface, e);
+            debug!("tc qdisc show on {iface} failed to spawn: {e}");
             false
         }
     }
@@ -65,7 +65,7 @@ pub fn freeze_htb(link_id: usize) {
 /// `has_htb_shaper` once at startup to avoid spamming logs on the no-HTB
 /// path.
 pub fn update_htb_rate(link_id: usize, rate: InformationRate) {
-    let iface = format!("pqueue{}_in", link_id);
+    let iface = format!("pqueue{link_id}_in");
     let kbit = rate.get::<kilobit_per_second>();
     // HTB's minimum rate is a few bits/sec; clamp aggressively to avoid
     // tc rejecting tiny rates with EINVAL when a scenario flips to zero.
@@ -96,10 +96,7 @@ pub fn update_htb_rate(link_id: usize, rate: InformationRate) {
 
     match result {
         Ok(o) if o.status.success() => {
-            debug!(
-                "Updated HTB class {} on {} (AQM under handle {}): rate={}",
-                HTB_LEAF_CLASSID, iface, HTB_AQM_HANDLE, rate_str
-            );
+            debug!("Updated HTB class {HTB_LEAF_CLASSID} on {iface} (AQM under handle {HTB_AQM_HANDLE}): rate={rate_str}");
         }
         Ok(o) => {
             warn!(
@@ -110,7 +107,7 @@ pub fn update_htb_rate(link_id: usize, rate: InformationRate) {
             );
         }
         Err(e) => {
-            warn!("tc class change on {} failed to spawn: {}", iface, e);
+            warn!("tc class change on {iface} failed to spawn: {e}");
         }
     }
 }

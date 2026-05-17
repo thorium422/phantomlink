@@ -94,7 +94,7 @@ pub(crate) fn setup(
 
     // assuming the default namespace is the one with ID 1
     let ns_id = 1;
-    exec("ln", &["-sf", &format!("/proc/{}/ns/net", ns_id), "/var/run/netns/default"])?;
+    exec("ln", &["-sf", &format!("/proc/{ns_id}/ns/net"), "/var/run/netns/default"])?;
 
     Ok(())
 }
@@ -189,8 +189,8 @@ fn setup_qdisc_veths(
     ];
 
     for (veth_name, qdisc_config, shaper) in &qdisc_veths {
-        let in_name = format!("{}_in", veth_name);
-        let out_name = format!("{}_out", veth_name);
+        let in_name = format!("{veth_name}_in");
+        let out_name = format!("{veth_name}_out");
 
         // Cleanup existing interface if it exists
         let _ = Command::new("ip")
@@ -225,8 +225,7 @@ fn setup_qdisc_veths(
 
         match shaper {
             ShaperKind::None => {
-                let mut qdisc_args =
-                    vec!["netns", "exec", NS_NAME_LINK, "tc", "qdisc", "add", "dev", &in_name, "root"];
+                let mut qdisc_args = vec!["netns", "exec", NS_NAME_LINK, "tc", "qdisc", "add", "dev", &in_name, "root"];
                 qdisc_args.extend_from_slice(qdisc_config);
                 Command::new("ip").args(qdisc_args).status()?;
             }
@@ -234,12 +233,24 @@ fn setup_qdisc_veths(
                 // See docs/qdisc-design-rationale.md: classless AQMs are no-ops as root in
                 // phantomlink's topology because the inner veth has no rate limit. We wrap
                 // them in an HTB shaper whose rate the scenario engine updates each tick.
-                let placeholder = format!("{}kbit", HTB_PLACEHOLDER_RATE_KBIT);
+                let placeholder = format!("{HTB_PLACEHOLDER_RATE_KBIT}kbit");
 
                 Command::new("ip")
                     .args([
-                        "netns", "exec", NS_NAME_LINK, "tc", "qdisc", "add", "dev", &in_name, "root", "handle", "1:",
-                        "htb", "default", "10",
+                        "netns",
+                        "exec",
+                        NS_NAME_LINK,
+                        "tc",
+                        "qdisc",
+                        "add",
+                        "dev",
+                        &in_name,
+                        "root",
+                        "handle",
+                        "1:",
+                        "htb",
+                        "default",
+                        "10",
                     ])
                     .status()?;
                 Command::new("ip")
@@ -281,8 +292,7 @@ fn setup_qdisc_veths(
                 Command::new("ip").args(aqm_args).status()?;
 
                 info!(
-                    "Built HTB+AQM tree on {} (leaf classid {}, AQM handle {}, placeholder rate {}; runtime will update on each scenario tick)",
-                    in_name, HTB_LEAF_CLASSID, HTB_AQM_HANDLE, placeholder
+                    "Built HTB+AQM tree on {in_name} (leaf classid {HTB_LEAF_CLASSID}, AQM handle {HTB_AQM_HANDLE}, placeholder rate {placeholder}; runtime will update on each scenario tick)"
                 );
             }
         }

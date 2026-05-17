@@ -101,7 +101,10 @@ impl OnewayVirtualLink {
         // as before. See docs/qdisc-design-rationale.md for the design.
         let has_htb_shaper = qdisc_shaper::has_htb_shaper(self.link_id);
         if has_htb_shaper {
-            debug!("Link {}: HTB shaper detected on pqueue{}_in; slaving its rate to pacer", self.link_id, self.link_id);
+            debug!(
+                "Link {}: HTB shaper detected on pqueue{}_in; slaving its rate to pacer",
+                self.link_id, self.link_id
+            );
             qdisc_shaper::update_htb_rate(self.link_id, btldr);
         }
 
@@ -189,7 +192,7 @@ impl OnewayVirtualLink {
 
                 let new_route_id = route_metric.route_id;
                 if route_id != new_route_id {
-                    debug!("Switch route {}->{}", route_id, new_route_id);
+                    debug!("Switch route {route_id}->{new_route_id}");
                     route_id = new_route_id;
 
                     // GSL (Pacer: Ground - Satellite)

@@ -56,7 +56,7 @@ impl Runtime {
         reconfiguration_delay: Duration,
         reconfiguration_mode: ReconfigurationMode,
     ) -> Result<Runtime> {
-        info!("Creating new phantomlink instance, reading input from {:?}.", input_file_path);
+        info!("Creating new phantomlink instance, reading input from {input_file_path:?}.");
 
         let rt = Runtime {
             route_metric_queue: RouteMetricQueue::try_load(input_file_path)?,
@@ -153,7 +153,7 @@ impl Runtime {
         thread::spawn(move || match stop_rx.recv() {
             Ok(_) => info!("Received shutdown signal, stopping phantomlink..."),
             Err(e) => {
-                error!("Error receiving shutdown signal: {}", e);
+                error!("Error receiving shutdown signal: {e}");
             }
         })
         .join()
@@ -170,7 +170,7 @@ impl Runtime {
     /// Stores the current value of a kernel parameter and returns it.
     fn store_kernel_param(&mut self, param: &str) -> Result<Vec<String>> {
         let value = get_kernel_param(param)?;
-        debug!("Store `{:?}` for `{param}`", value);
+        debug!("Store `{value:?}` for `{param}`");
         self.default_kernel_params.insert(param.to_string(), value.clone());
         Ok(value)
     }
@@ -179,7 +179,7 @@ impl Runtime {
     fn restore_kernel_params(&self) -> Result<()> {
         info!("Restoring kernel parameters.");
         for (param, value) in &self.default_kernel_params {
-            debug!("Restoring `{:?}` for `{param}`", value);
+            debug!("Restoring `{value:?}` for `{param}`");
             let values = value.join(" ");
             set_kernel_param(&format!("{param}={values}"))?;
         }
@@ -232,7 +232,7 @@ impl Runtime {
             let line = format!("{param}={value}");
             writeln!(file, "{line}").map_err(|e| eyre::eyre!("Could not write kernel parameter to temporary file: {}", e))?;
         }
-        info!("Wrote changed kernel parameters to temporary file: `{:?}` (Owned by root)", path);
+        info!("Wrote changed kernel parameters to temporary file: `{path:?}` (Owned by root)");
         Ok(())
     }
 }
