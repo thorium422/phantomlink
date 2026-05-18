@@ -21,14 +21,24 @@ mkdir -p "$OUTDIR"
 modprobe tcp_bbr 2>/dev/null || true
 
 # Same AQM list as qdisc_ci_sweep.sh (UDP). Keep them in sync.
+#
+# `_ecn` variants are where ECN actually does something: qdisc_ci_run_tcp.sh
+# sets `net.ipv4.tcp_ecn=1` in the client namespace for these rows so iperf3
+# negotiates ECN on the SYN, and the AQM then marks ECT(0)/CE instead of
+# dropping.
 QDISCS=(
     "pfifo:pfifo limit 1000"
     "pfifo_head_drop:pfifo_head_drop limit 1000"
     "codel:codel target 5ms"
+    "codel_ecn:codel target 5ms ecn"
     "fq_codel:fq_codel limit 10240 target 5ms"
+    "fq_codel_ecn:fq_codel limit 10240 target 5ms ecn"
     "red:red limit 60000 min 5000 max 15000 avpkt 1000 burst 50"
+    "red_ecn:red limit 60000 min 5000 max 15000 avpkt 1000 burst 50 ecn"
     "pie:pie target 5ms tupdate 15ms"
+    "pie_ecn:pie target 5ms tupdate 15ms ecn"
     "fq_pie:fq_pie target 5ms"
+    "fq_pie_ecn:fq_pie target 5ms ecn"
 )
 
 # Sanity-check the CCAs the kernel actually offers. iperf3 -C <bad> would

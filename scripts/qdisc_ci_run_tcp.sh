@@ -49,6 +49,17 @@ echo "=== tcp_${NAME}  htb-shaper TCP -C $CCA for ${DURATION}s — $QDISC ==="
 
 $PHANTOM setup -c "$QDISC" -s "$QDISC" > "$OUTDIR/setup_tcp_$NAME.log" 2>&1
 
+# If the AQM is in ECN mode, switch the client+server namespaces to
+# tcp_ecn=1 (initiate ECN-capable connections) so iperf3 actually negotiates
+# ECN on the SYN. Without this the kernel default (2 = passive) only accepts
+# ECN if the peer asks, so neither side asks and the AQM falls back to
+# dropping. Each per-run namespace is torn down at teardown so no cleanup
+# needed beyond the run's own lifetime.
+if [[ "$QDISC" == *"ecn"* ]]; then
+    ip netns exec pl_client sysctl -wq net.ipv4.tcp_ecn=1 || true
+    ip netns exec pl_server sysctl -wq net.ipv4.tcp_ecn=1 || true
+fi
+
 $PHANTOM start examples/input.csv > "$OUTDIR/start_tcp_$NAME.log" 2>&1 &
 START_PID=$!
 sleep 1
