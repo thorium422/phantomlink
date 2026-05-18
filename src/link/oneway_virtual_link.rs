@@ -13,14 +13,18 @@ use spin_sleep::SpinSleeper;
 use thread_priority::{set_current_thread_priority, ThreadPriority};
 use uom::si::{
     f64::{Information, InformationRate, Time},
-    information::{bit, kilobyte},
+    information::kilobyte,
     information_rate::megabit_per_second,
     time::microsecond,
 };
 
 use crate::{
-    byte_bounded_channel::byte_bounded_channel, cli::StartupMode, inflight_queue::InflightQueue, route_metrics::RouteMetricQueue,
-    runtime::Runtime, ReconfigurationMode,
+    cli::StartupMode,
+    inflight_queue::InflightQueue,
+    queue::{qdisc_shaper, qdisc_wrapper::qdisc_channel},
+    route_metrics::RouteMetricQueue,
+    runtime::Runtime,
+    ReconfigurationMode,
 };
 
 use super::{deliverer::Deliverer, drainer::Drainer, pacer::Pacer};
@@ -91,9 +95,11 @@ impl OnewayVirtualLink {
         let mut route_id = rdp.route_id;
         let inflight_queue = Arc::new((Mutex::new(InflightQueue::new(self.link_id, delay)), Condvar::new()));
 
-        // create ByteBoundedChannel
-        let channel_size: Information = self.calculate_bottleneck_buffer_size(btldr, delay);
-        let (sender, receiver, channel_handle) = byte_bounded_channel(Information::new::<bit>(channel_size.get::<bit>()));
+        // Use HTB shaper with the initial rate set to
+        // the pacer from the first tick. We do this because otherwise a queue doesn't build up for our qdisc, making it pointless and giving false measurements otherwise.
+        qdisc_shaper::update_htb_rate(self.link_id, btldr);
+
+        let (sender, receiver, _qdisc_handle) = qdisc_channel(&format!("pqueue{}", self.link_id))?;
 
         // create & start drainer
         let drainer = Arc::new(Drainer::new(self.link_id, self.startup_mode, sender));
@@ -105,7 +111,7 @@ impl OnewayVirtualLink {
 
         // create & start pacer
         let pacer = Arc::new(Pacer::create(route_id, receiver, inflight_queue.clone(), btldr, delay));
-        let pacer_clone: Arc<Pacer> = pacer.clone();
+        let pacer_clone: Arc<Pacer<_>> = pacer.clone();
         let core_id_pacer = self.core_config.as_ref().map(|cfg| cfg.core_id_pacer);
         let thread_pacer = thread::spawn(move || {
             pacer_clone.run(core_id_pacer);
@@ -156,12 +162,25 @@ impl OnewayVirtualLink {
                     delay.as_millis(),
                     btldr.get::<megabit_per_second>().round()
                 );
-                pacer.update_datarate(btldr);
+
+                // When we get a change to the rate limit of the pacer, we update the HTB shaper
+                // to match, but always keep it "narrower" if need be so that the bottleneck is always as close as possible to
+                // the qdisc i.e.
+                //   - if we're widening (new > current): pacer first, qdisc second
+                //   - if were narrowing/equal:           qdisc first, pacer second
+                let current = pacer.current_datarate();
+                if btldr > current {
+                    pacer.update_datarate(btldr);
+                    qdisc_shaper::update_htb_rate(self.link_id, btldr);
+                } else {
+                    qdisc_shaper::update_htb_rate(self.link_id, btldr);
+                    pacer.update_datarate(btldr);
+                }
                 pacer.update_delay(delay);
 
                 let new_route_id = route_metric.route_id;
                 if route_id != new_route_id {
-                    debug!("Switch route {}->{}", route_id, new_route_id);
+                    debug!("Switch route {route_id}->{new_route_id}");
                     route_id = new_route_id;
 
                     // GSL (Pacer: Ground - Satellite)
@@ -174,8 +193,20 @@ impl OnewayVirtualLink {
                     // GSL (Deliverer: Satellite - Ground)
                     deliverer_reconfig_until.store(Some(Instant::now() + reconfiguration_delay));
 
-                    let new_channel_size: Information = self.calculate_bottleneck_buffer_size(btldr, delay);
-                    channel_handle.update_capacity(new_channel_size);
+                    // We also mirror the pacer's reconfiguration delay onto the HTB shaper.
+                    // Without this, packets keep dequeueing through the
+                    // qdisc at the configured rate during the window and pile up on
+                    // the inner veth peer's rx queue (which the pacer stops
+                    // draining), and drop silently i.e. making the qdisc ignored.
+                    if !reconfiguration_delay.is_zero() {
+                        qdisc_shaper::freeze_htb(self.link_id);
+                        let link_id = self.link_id;
+                        let pacer_for_restore = pacer.clone();
+                        thread::spawn(move || {
+                            thread::sleep(reconfiguration_delay);
+                            qdisc_shaper::update_htb_rate(link_id, pacer_for_restore.current_datarate());
+                        });
+                    }
                 }
             }
         }
@@ -186,6 +217,7 @@ impl OnewayVirtualLink {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn calculate_bottleneck_buffer_size(&self, datarate: InformationRate, delay: Duration) -> Information {
         let bdp: Information = Self::calculate_bdp(datarate, delay);
         let buffer_size: Information = bdp * self.buffer_size_multiplier;

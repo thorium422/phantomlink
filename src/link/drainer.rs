@@ -6,20 +6,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use thread_priority::{set_current_thread_priority, ThreadPriority};
 
 use crate::{
-    byte_bounded_channel::{self, ByteSender},
     cli::StartupMode,
+    queue::common::{QueueChannelSender, TrySendError},
     runtime::Runtime,
 };
 
-pub struct Drainer {
+pub struct Drainer<T: QueueChannelSender> {
     link_id: usize,
     startup_logic: StartupMode,
-    next_sender: AtomicCell<Option<ByteSender>>,
+    next_sender: AtomicCell<Option<T>>,
     next_ready: AtomicBool,
 }
 
-impl Drainer {
-    pub fn new(link_id: usize, startup_logic: StartupMode, initial_sender: ByteSender) -> Self {
+impl<T: QueueChannelSender> Drainer<T> {
+    pub fn new(link_id: usize, startup_logic: StartupMode, initial_sender: T) -> Self {
         let next_sender = AtomicCell::new(Some(initial_sender));
         let next_ready = AtomicBool::new(false);
         Drainer {
@@ -52,7 +52,7 @@ impl Drainer {
         }
     }
 
-    fn handle_startup(&self, tx: &mut ByteSender, socket_input: &mut Box<dyn DataLinkReceiver>) {
+    fn handle_startup(&self, tx: &mut T, socket_input: &mut Box<dyn DataLinkReceiver>) {
         if self.startup_logic == StartupMode::AppStart {
             Runtime::access_app_start_time();
             return;
@@ -71,13 +71,13 @@ impl Drainer {
         }
     }
 
-    fn handle_packet(&self, tx: &mut ByteSender, data: Vec<u8>) {
+    fn handle_packet(&self, tx: &mut T, data: Vec<u8>) {
         if let Err(e) = tx.try_send(data) {
             match e {
-                byte_bounded_channel::TrySendError::ChannelFullError => {
+                TrySendError::ChannelFullError => {
                     debug!("Drop packet");
                 }
-                byte_bounded_channel::TrySendError::ChannelDisconnected => panic!("Channel is disconnected."),
+                TrySendError::ChannelDisconnected => panic!("Channel is disconnected."),
             }
         }
     }

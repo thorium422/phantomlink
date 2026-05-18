@@ -1,0 +1,124 @@
+#!/bin/bash
+# Run one (AQM + TCP congestion-control algorithm) pair through phantomlink
+# with the HTB shaper. Sibling script to qdisc_ci_run.sh (which does UDP
+# overload).
+#
+# Usage:
+#   sudo ./scripts/qdisc_ci_run_tcp.sh <qdisc-name> "<aqm tokens>" <cca> [options]
+#
+# Options:
+#   --duration <s>     iperf3 -t test length (default 25, just covers the
+#                       100→80 Mbps route change at t=22s in examples/input.csv).
+#   --outdir <dir>     output dir (default /tmp/qdisc_runs).
+#
+# Output (in $OUTDIR):
+#   client_tcp_<qdisc>_<cca>.json      iperf3 --json client output
+#   server_tcp_<qdisc>_<cca>.txt
+#   qdisc_tcp_<qdisc>_<cca>_ts.txt     tc snapshots prefixed by t=
+#   pcap_tcp_<qdisc>_<cca>_in.pcap     pre-AQM packet capture (headers only)
+#   pcap_tcp_<qdisc>_<cca>_out.pcap    post-AQM packet capture (headers only)
+#   setup_tcp_<qdisc>_<cca>.log
+#   start_tcp_<qdisc>_<cca>.log
+#   teardown_tcp_<qdisc>_<cca>.log
+
+set -uo pipefail
+
+if [ $# -lt 3 ]; then
+    sed -n '2,/^$/p' "$0" >&2
+    exit 1
+fi
+
+QDISC_NAME="$1"; shift
+QDISC="$1"; shift
+CCA="$1"; shift
+DURATION=25
+OUTDIR="/tmp/qdisc_runs"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --duration) DURATION="$2"; shift 2 ;;
+        --outdir)   OUTDIR="$2"; shift 2 ;;
+        *) echo "unknown arg: $1" >&2; exit 1 ;;
+    esac
+done
+
+NAME="${QDISC_NAME}_${CCA}"
+mkdir -p "$OUTDIR"
+PHANTOM=./target/debug/phantomlink
+
+echo "=== tcp_${NAME}  htb-shaper TCP -C $CCA for ${DURATION}s — $QDISC ==="
+
+$PHANTOM setup -c "$QDISC" -s "$QDISC" > "$OUTDIR/setup_tcp_$NAME.log" 2>&1
+
+# If the AQM is in ECN mode, switch the client+server namespaces to
+# tcp_ecn=1 (initiate ECN-capable connections) so iperf3 actually negotiates
+# ECN on the SYN. Without this the kernel default (2 = passive) only accepts
+# ECN if the peer asks, so neither side asks and the AQM falls back to
+# dropping. Each per-run namespace is torn down at teardown so no cleanup
+# needed beyond the run's own lifetime.
+if [[ "$QDISC" == *"ecn"* ]]; then
+    ip netns exec pl_client sysctl -wq net.ipv4.tcp_ecn=1 || true
+    ip netns exec pl_server sysctl -wq net.ipv4.tcp_ecn=1 || true
+fi
+
+$PHANTOM start examples/input.csv > "$OUTDIR/start_tcp_$NAME.log" 2>&1 &
+START_PID=$!
+sleep 1
+$PHANTOM exec server iperf3 -s --port 5000 > "$OUTDIR/server_tcp_$NAME.txt" 2>&1 &
+SERVER_PID=$!
+sleep 1
+
+# Header-only pcap on both sides of the AQM. -s 96 keeps each packet to
+# Ethernet+IP+TCP headers (no payload) so artifacts stay manageable across
+# full sweeps; comparing _in vs _out shows what the AQM dropped/marked.
+ip netns exec pl_link tcpdump -i pqueue0_in  -s 96 -n -w "$OUTDIR/pcap_tcp_${NAME}_in.pcap"  >/dev/null 2>&1 &
+TCPDUMP_IN_PID=$!
+ip netns exec pl_link tcpdump -i pqueue0_out -s 96 -n -w "$OUTDIR/pcap_tcp_${NAME}_out.pcap" >/dev/null 2>&1 &
+TCPDUMP_OUT_PID=$!
+
+N_SAMPLES=$(( (DURATION + 2) * 2 ))
+( for i in $(seq 1 $N_SAMPLES); do
+      awk -v i=$i 'BEGIN { printf "=== t=%.1f ===\n", i*0.5 }'
+      ip netns exec pl_link tc -s qdisc show dev pqueue0_in
+      sleep 0.5
+  done
+) > "$OUTDIR/qdisc_tcp_${NAME}_ts.txt" 2>&1 &
+POLL_PID=$!
+
+$PHANTOM exec client iperf3 -c 192.168.66.2 --port 5000 \
+    -C "$CCA" -t "$DURATION" --json \
+    > "$OUTDIR/client_tcp_$NAME.json" 2>&1
+CLIENT_STATUS=$?
+
+kill "$POLL_PID" 2>/dev/null || true
+kill "$TCPDUMP_IN_PID" "$TCPDUMP_OUT_PID" 2>/dev/null || true
+kill "$SERVER_PID" 2>/dev/null || true
+kill -INT "$START_PID" 2>/dev/null || true
+sleep 2
+$PHANTOM teardown > "$OUTDIR/teardown_tcp_$NAME.log" 2>&1 || true
+
+if [ "$CLIENT_STATUS" -ne 0 ]; then
+    echo "iperf3 TCP client returned $CLIENT_STATUS for $NAME" >&2
+fi
+
+# One-line summary so CI log shows progress
+python3 - "$OUTDIR/client_tcp_$NAME.json" "$CCA" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        txt = f.read()
+    i = txt.find('{')
+    d = json.loads(txt[i:]) if i >= 0 else {}
+    e = d.get('end', {})
+    s = e.get('sum_sent', {})
+    r = e.get('sum_received', {})
+    streams = e.get('streams', [])
+    sender = streams[0].get('sender', {}) if streams else {}
+    rtx = sender.get('retransmits', '?')
+    mean_rtt_us = sender.get('mean_rtt', 0) or 0
+    print(f"  cca={sys.argv[2]}  send={s.get('bits_per_second',0)/1e6:6.2f} Mbps  "
+          f"recv={r.get('bits_per_second',0)/1e6:6.2f} Mbps  "
+          f"retransmits={rtx}  mean_rtt={mean_rtt_us/1000:.1f}ms")
+except Exception as exc:
+    print(f"  (failed to parse iperf3 JSON: {exc})")
+PY
+sleep 1

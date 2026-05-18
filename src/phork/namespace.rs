@@ -1,11 +1,21 @@
 use eyre;
 use libc::{setns, CLONE_NEWNET};
+use log::info;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::phork::utils::*;
 use crate::phork::veth::VEth;
+
+/// What we initialize the HTB shaper to with on setup. Gets overwritten when the scenario starts anyway,
+/// but we need to set it to something to start
+const HTB_PLACEHOLDER_RATE_KBIT: u32 = 1_000_000;
+/// Class id of the HTB leaf class on pqueueN_in
+pub(crate) const HTB_LEAF_CLASSID: &str = "1:10";
+/// Handle of the AQM child qdisc under the HTB leaf class
+pub(crate) const HTB_AQM_HANDLE: &str = "10:";
 
 pub const NS_NAME_LINK: &str = "pl_link";
 pub const NS_NAME_CLIENT: &str = "pl_client";
@@ -25,7 +35,7 @@ pub(crate) fn is_setup() -> eyre::Result<bool> {
 }
 
 /// Sets up the network namespaces and virtual ethernet links for the phork environment.
-pub(crate) fn setup() -> eyre::Result<()> {
+pub(crate) fn setup(qdisc_client_config: Vec<String>, qdisc_server_config: Vec<String>) -> eyre::Result<()> {
     // create namespaces
     for ns in NAMESPACES {
         Namespace::try_create(ns)?;
@@ -64,9 +74,15 @@ pub(crate) fn setup() -> eyre::Result<()> {
         veth.set_default_route()?;
     }
 
+    // Create qdisc veth pairs for each link
+    setup_qdisc_veths(
+        qdisc_client_config.iter().map(|x| x.as_str()).collect(),
+        qdisc_server_config.iter().map(|x| x.as_str()).collect(),
+    )?;
+
     // assuming the default namespace is the one with ID 1
     let ns_id = 1;
-    exec("ln", &["-sf", &format!("/proc/{}/ns/net", ns_id), "/var/run/netns/default"])?;
+    exec("ln", &["-sf", &format!("/proc/{ns_id}/ns/net"), "/var/run/netns/default"])?;
 
     Ok(())
 }
@@ -147,4 +163,108 @@ impl Namespace {
     fn path(&self) -> PathBuf {
         Path::new(&format!("/var/run/netns/{}", self.name)).to_path_buf()
     }
+}
+
+fn setup_qdisc_veths(qdisc_client_config: Vec<&str>, qdisc_server_config: Vec<&str>) -> eyre::Result<()> {
+    let qdisc_veths = [("pqueue0", qdisc_client_config), ("pqueue1", qdisc_server_config)];
+
+    for (veth_name, qdisc_config) in &qdisc_veths {
+        let in_name = format!("{veth_name}_in");
+        let out_name = format!("{veth_name}_out");
+
+        // Cleanup existing interface if it exists
+        let _ = Command::new("ip")
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "del", &in_name])
+            .output();
+
+        // Create veth pair
+        Command::new("ip")
+            .args([
+                "netns",
+                "exec",
+                NS_NAME_LINK,
+                "ip",
+                "link",
+                "add",
+                &in_name,
+                "type",
+                "veth",
+                "peer",
+                "name",
+                &out_name,
+            ])
+            .status()?;
+
+        Command::new("ip")
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &in_name, "up"])
+            .status()?;
+
+        Command::new("ip")
+            .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &out_name, "up"])
+            .status()?;
+
+        let placeholder = format!("{HTB_PLACEHOLDER_RATE_KBIT}kbit");
+
+        Command::new("ip")
+            .args([
+                "netns",
+                "exec",
+                NS_NAME_LINK,
+                "tc",
+                "qdisc",
+                "add",
+                "dev",
+                &in_name,
+                "root",
+                "handle",
+                "1:",
+                "htb",
+                "default",
+                "10",
+            ])
+            .status()?;
+        Command::new("ip")
+            .args([
+                "netns",
+                "exec",
+                NS_NAME_LINK,
+                "tc",
+                "class",
+                "add",
+                "dev",
+                &in_name,
+                "parent",
+                "1:",
+                "classid",
+                HTB_LEAF_CLASSID,
+                "htb",
+                "rate",
+                &placeholder,
+                "ceil",
+                &placeholder,
+            ])
+            .status()?;
+        let mut aqm_args = vec![
+            "netns",
+            "exec",
+            NS_NAME_LINK,
+            "tc",
+            "qdisc",
+            "add",
+            "dev",
+            &in_name,
+            "parent",
+            HTB_LEAF_CLASSID,
+            "handle",
+            HTB_AQM_HANDLE,
+        ];
+        aqm_args.extend_from_slice(qdisc_config);
+        Command::new("ip").args(aqm_args).status()?;
+
+        info!(
+            "Built HTB+AQM tree on {in_name} (leaf classid {HTB_LEAF_CLASSID}, AQM handle {HTB_AQM_HANDLE}, placeholder rate {placeholder}; runtime will update on each scenario tick)"
+        );
+    }
+
+    Ok(())
 }

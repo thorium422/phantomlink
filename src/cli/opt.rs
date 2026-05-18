@@ -25,13 +25,37 @@ pub enum Commands {
     #[command(about = "Execute a command in the virtual link environment")]
     Exec(ExecArgs),
     #[command(about = "Setup the network environment")]
-    Setup,
+    Setup(SetupArgs),
     #[command(about = "Tear down the network environment")]
     Teardown,
     #[command(about = "Start the socket stats logger")]
     SocketStats(SocketstatsArgs),
     #[command(about = "Generate shell completions")]
     Generate(GenerateArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct SetupArgs {
+    #[arg(
+        long = "qdisc-client",
+        short = 'c',
+        help = "AQM tokens (e.g. `codel target 5ms`) for the client direction. phantomlink always builds an HTB+AQM tree on pqueue0_in whose rate the scenario engine slaves to the pacer.",
+        required = false,
+        num_args = 1..,
+        value_delimiter = ' ',
+        default_values_t = vec!["pfifo".to_string(), "limit".to_string(), "1000".to_string()])
+    ]
+    pub qdisc_client_config: Vec<String>,
+    #[arg(
+        long = "qdisc-server",
+        short = 's',
+        help = "Same as --qdisc-client for the server direction (attaches to pqueue1_in).",
+        required = false,
+        num_args = 1..,
+        value_delimiter = ' ',
+        default_values_t = vec!["pfifo".to_string(), "limit".to_string(), "1000".to_string()])
+    ]
+    pub qdisc_server_config: Vec<String>,
 }
 
 #[derive(Args, Debug)]

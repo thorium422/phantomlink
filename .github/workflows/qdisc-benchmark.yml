@@ -1,0 +1,109 @@
+name: qdisc-benchmark
+
+on:
+  push:
+    paths-ignore:
+      - '**/*.md'
+      - 'TODO.MD'
+      - 'LICENSE-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qdisc-benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: 🚦 AQM sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DURATION_UDP: "20"   # seconds per AQM in the UDP overload sweep
+      DURATION_TCP: "25"   # seconds per (AQM + CCA) - spans the t=22s route change
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iperf3 ethtool net-tools iproute2 python3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-qdisc-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-qdisc-${{ runner.os }}-
+
+      - name: Build phantomlink
+        run: cargo build
+
+      - name: Sanity-check kernel + capabilities
+        run: |
+          uname -a
+          # All AQMs we exercise were upstreamed by Linux 5.6; GHA's Ubuntu
+          # runners are well past that. List them to fail fast if a kernel
+          # were missing one.
+          for q in pfifo pfifo_head_drop codel fq_codel red pie fq_pie; do
+              if ! modinfo "sch_$q" >/dev/null 2>&1 && \
+                 ! grep -q "$q" /proc/modules 2>/dev/null; then
+                  echo "warning: sch_$q not visible (may still be built-in)"
+              fi
+          done
+          # Pre-load tcp_bbr so the TCP sweep can use -C bbr. Cubic + reno are
+          # always available; bbr is a module that's present-but-not-loaded.
+          sudo modprobe tcp_bbr 2>/dev/null || echo "warning: could not load tcp_bbr"
+          echo "Available CCAs: $(cat /proc/sys/net/ipv4/tcp_available_congestion_control)"
+          # Setup-time peeks. tc + ip netns must work; everything else flows
+          # from there.
+          sudo ip netns add ci-probe
+          sudo ip netns del ci-probe
+
+      - name: Run UDP overload sweep
+        env:
+          DURATION: ${{ env.DURATION_UDP }}
+        run: sudo -E env "PATH=$PATH" ./scripts/qdisc_ci_sweep.sh
+
+      - name: Run TCP CCA + AQM sweep
+        env:
+          DURATION: ${{ env.DURATION_TCP }}
+        run: sudo -E env "PATH=$PATH" ./scripts/qdisc_ci_sweep_tcp.sh
+
+      - name: Generate Markdown tables
+        if: always()
+        run: |
+          sudo chown -R "$USER:$USER" /tmp/qdisc_runs 2>/dev/null || true
+          mkdir -p /tmp/qdisc_runs
+          python3 scripts/qdisc_ci_table.py /tmp/qdisc_runs > /tmp/qdisc_table_udp.md
+          python3 scripts/qdisc_ci_table_tcp.py /tmp/qdisc_runs > /tmp/qdisc_table_tcp.md
+          cat /tmp/qdisc_table_udp.md
+          echo
+          cat /tmp/qdisc_table_tcp.md
+          {
+            echo ""
+            cat /tmp/qdisc_table_udp.md
+            echo ""
+            cat /tmp/qdisc_table_tcp.md
+            echo ""
+            echo "_Commit: \`${GITHUB_SHA}\` · raw logs in the **qdisc-runs** artifact below._"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qdisc-runs
+          path: /tmp/qdisc_runs/
+          if-no-files-found: warn

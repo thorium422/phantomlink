@@ -1,8 +1,8 @@
 use log::{error, info};
 
-use crate::{commands::utils, phork};
+use crate::{cli::opt::SetupArgs, commands::utils, phork};
 
-pub(crate) fn run() -> eyre::Result<()> {
+pub(crate) fn run(setup_args: SetupArgs) -> eyre::Result<()> {
     // check if the user is root
     utils::ensure_user_is_root()?;
 
@@ -12,5 +12,5 @@ pub(crate) fn run() -> eyre::Result<()> {
         return Ok(());
     }
     info!("Setting up network environment");
-    phork::namespace::setup()
+    phork::namespace::setup(setup_args.qdisc_client_config, setup_args.qdisc_server_config)
 }
