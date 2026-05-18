@@ -207,14 +207,10 @@ fn setup_qdisc_veths(qdisc_client_config: Vec<&str>, qdisc_server_config: Vec<&s
             .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &out_name, "up"])
             .status()?;
 
-        if qdisc_config.is_empty() {
-            continue;
-        }
-
         // See docs/qdisc-design-rationale.md: classless AQMs are no-ops as root in
         // phantomlink's topology because the inner veth has no rate limit. We always
-        // wrap the user-supplied AQM in an HTB shaper whose rate the scenario engine
-        // updates each tick.
+        // wrap the AQM (user-supplied or the default pfifo) in an HTB shaper whose
+        // rate the scenario engine updates each tick.
         let placeholder = format!("{HTB_PLACEHOLDER_RATE_KBIT}kbit");
 
         Command::new("ip")

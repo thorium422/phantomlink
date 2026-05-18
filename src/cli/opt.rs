@@ -39,11 +39,12 @@ pub struct SetupArgs {
     #[arg(
         long = "qdisc-client",
         short = 'c',
-        help = "AQM tokens (e.g. `codel target 5ms`) for the client direction. When set, phantomlink builds an HTB+AQM tree on pqueue0_in whose rate the scenario engine slaves to the pacer (classless AQMs need this to actually engage — see docs/qdisc-design-rationale.md). When omitted, no qdisc is attached.",
+        help = "AQM tokens (e.g. `codel target 5ms`) for the client direction. phantomlink always builds an HTB+AQM tree on pqueue0_in whose rate the scenario engine slaves to the pacer (classless AQMs need this to actually engage — see docs/qdisc-design-rationale.md).",
         required = false,
         num_args = 1..,
         value_delimiter = ' ',
-    )]
+        default_values_t = vec!["pfifo".to_string(), "limit".to_string(), "1000".to_string()])
+    ]
     pub qdisc_client_config: Vec<String>,
     #[arg(
         long = "qdisc-server",
@@ -52,7 +53,8 @@ pub struct SetupArgs {
         required = false,
         num_args = 1..,
         value_delimiter = ' ',
-    )]
+        default_values_t = vec!["pfifo".to_string(), "limit".to_string(), "1000".to_string()])
+    ]
     pub qdisc_server_config: Vec<String>,
 }
 
