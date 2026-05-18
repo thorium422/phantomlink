@@ -9,16 +9,12 @@ use std::process::Command;
 use crate::phork::utils::*;
 use crate::phork::veth::VEth;
 
-/// Placeholder rate written into the HTB class at `setup` time. The runtime
-/// overwrites this on the first scenario tick, so any sensible value works.
-/// We pick 1 Gbit/s to make accidental no-runtime usage obviously
-/// over-provisioned rather than throttling.
+/// What we initialize the HTB shaper to with on setup. Gets overwritten when the scenario starts anyway,
+/// but we need to set it to something to start
 const HTB_PLACEHOLDER_RATE_KBIT: u32 = 1_000_000;
-/// Class id of the (only) HTB leaf class on `pqueueN_in`. The runtime locates
-/// it by this exact id, so don't change without updating
-/// `crate::queue::qdisc_shaper`.
+/// Class id of the HTB leaf class on pqueueN_in
 pub(crate) const HTB_LEAF_CLASSID: &str = "1:10";
-/// Handle of the AQM child qdisc under the HTB leaf class.
+/// Handle of the AQM child qdisc under the HTB leaf class
 pub(crate) const HTB_AQM_HANDLE: &str = "10:";
 
 pub const NS_NAME_LINK: &str = "pl_link";
@@ -207,10 +203,6 @@ fn setup_qdisc_veths(qdisc_client_config: Vec<&str>, qdisc_server_config: Vec<&s
             .args(["netns", "exec", NS_NAME_LINK, "ip", "link", "set", &out_name, "up"])
             .status()?;
 
-        // See docs/qdisc-design-rationale.md: classless AQMs are no-ops as root in
-        // phantomlink's topology because the inner veth has no rate limit. We always
-        // wrap the AQM (user-supplied or the default pfifo) in an HTB shaper whose
-        // rate the scenario engine updates each tick.
         let placeholder = format!("{HTB_PLACEHOLDER_RATE_KBIT}kbit");
 
         Command::new("ip")

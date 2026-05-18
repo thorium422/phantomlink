@@ -95,8 +95,8 @@ impl OnewayVirtualLink {
         let mut route_id = rdp.route_id;
         let inflight_queue = Arc::new((Mutex::new(InflightQueue::new(self.link_id, delay)), Condvar::new()));
 
-        // Setup always builds an HTB shaper on pqueueN_in; slave its rate to
-        // the pacer from the first tick. See docs/qdisc-design-rationale.md.
+        // Use HTB shaper with the initial rate set to
+        // the pacer from the first tick. We do this because otherwise a queue doesn't build up for our qdisc, making it pointless and giving false measurements otherwise.
         qdisc_shaper::update_htb_rate(self.link_id, btldr);
 
         let (sender, receiver, _qdisc_handle) = qdisc_channel(&format!("pqueue{}", self.link_id))?;
@@ -162,11 +162,12 @@ impl OnewayVirtualLink {
                     delay.as_millis(),
                     btldr.get::<megabit_per_second>().round()
                 );
-                // Keep the qdisc as the narrower of (qdisc, pacer) throughout
-                // the transition so that the AQM keeps owning the drops:
-                //   - widening (new > current): pacer first, qdisc second
-                //   - narrowing/equal:           qdisc first, pacer second
-                // See docs/qdisc-design-rationale.md "How this preserves P3".
+
+                // When we get a change to the rate limit of the pacer, we update the HTB shaper
+                // to match, but always keep it "narrower" if need be so that the bottleneck is always as close as possible to
+                // the qdisc i.e.
+                //   - if we're widening (new > current): pacer first, qdisc second
+                //   - if were narrowing/equal:           qdisc first, pacer second
                 let current = pacer.current_datarate();
                 if btldr > current {
                     pacer.update_datarate(btldr);
@@ -192,23 +193,17 @@ impl OnewayVirtualLink {
                     // GSL (Deliverer: Satellite - Ground)
                     deliverer_reconfig_until.store(Some(Instant::now() + reconfiguration_delay));
 
-                    // Mirror the pacer's reconfiguration blackout onto the HTB
-                    // shaper. Without this, packets keep dequeueing through the
-                    // qdisc at the configured rate during the window, pile up on
+                    // We also mirror the pacer's reconfiguration delay onto the HTB shaper.
+                    // Without this, packets keep dequeueing through the
+                    // qdisc at the configured rate during the window and pile up on
                     // the inner veth peer's rx queue (which the pacer stops
-                    // draining), and drop silently — re-introducing the
-                    // backpressure-decoupling failure mode the HTB wrapper exists
-                    // to avoid. See docs/qdisc-design-rationale.md P2.
-                    // The restore reads the pacer's current rate (not the rate
-                    // captured at switch time) so a scenario tick that fires
-                    // *during* the window is honoured rather than clobbered.
+                    // draining), and drop silently i.e. making the qdisc ignored.
                     if !reconfiguration_delay.is_zero() {
                         qdisc_shaper::freeze_htb(self.link_id);
                         let link_id = self.link_id;
                         let pacer_for_restore = pacer.clone();
-                        let window = reconfiguration_delay;
                         thread::spawn(move || {
-                            thread::sleep(window);
+                            thread::sleep(reconfiguration_delay);
                             qdisc_shaper::update_htb_rate(link_id, pacer_for_restore.current_datarate());
                         });
                     }
