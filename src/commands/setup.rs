@@ -12,10 +12,5 @@ pub(crate) fn run(setup_args: SetupArgs) -> eyre::Result<()> {
         return Ok(());
     }
     info!("Setting up network environment");
-    phork::namespace::setup(
-        setup_args.qdisc_client_config,
-        setup_args.qdisc_server_config,
-        setup_args.qdisc_client_shaper,
-        setup_args.qdisc_server_shaper,
-    )
+    phork::namespace::setup(setup_args.qdisc_client_config, setup_args.qdisc_server_config)
 }

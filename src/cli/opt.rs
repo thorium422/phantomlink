@@ -39,53 +39,21 @@ pub struct SetupArgs {
     #[arg(
         long = "qdisc-client",
         short = 'c',
-        help = "The arguments to pass to the qdisc for the client. When --qdisc-client-shaper is `none` (default) this becomes the root qdisc; when set to `htb` it becomes the AQM child of an HTB shaper whose rate is slaved to the scenario.",
+        help = "AQM tokens (e.g. `codel target 5ms`) for the client direction. When set, phantomlink builds an HTB+AQM tree on pqueue0_in whose rate the scenario engine slaves to the pacer (classless AQMs need this to actually engage — see docs/qdisc-design-rationale.md). When omitted, no qdisc is attached.",
         required = false,
         num_args = 1..,
         value_delimiter = ' ',
-        default_values_t = vec!["pfifo".to_string(), "limit".to_string(), "1000".to_string()])
-    ]
+    )]
     pub qdisc_client_config: Vec<String>,
     #[arg(
         long = "qdisc-server",
         short = 's',
-        help = "The arguments to pass to the qdisc for the server. See --qdisc-client.",
+        help = "Same as --qdisc-client for the server direction (attaches to pqueue1_in).",
+        required = false,
         num_args = 1..,
         value_delimiter = ' ',
-        default_values_t = vec!["pfifo".to_string(), "limit".to_string(), "1000".to_string()])
-    ]
+    )]
     pub qdisc_server_config: Vec<String>,
-    #[clap(
-        value_enum,
-        long = "qdisc-client-shaper",
-        help = "Wrap the client-side qdisc in a rate-shaping parent whose rate is slaved to the scenario. `htb` builds an HTB root with the --qdisc-client tokens as its leaf-class child, which is what classless AQMs (codel/red/pie/...) need in order to actually engage in phantomlink's topology. `none` keeps backwards-compatible behaviour.",
-        default_value_t = ShaperKind::None,
-        required = false
-    )]
-    pub qdisc_client_shaper: ShaperKind,
-    #[clap(
-        value_enum,
-        long = "qdisc-server-shaper",
-        help = "Same as --qdisc-client-shaper for the server-side direction.",
-        default_value_t = ShaperKind::None,
-        required = false
-    )]
-    pub qdisc_server_shaper: ShaperKind,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShaperKind {
-    None,
-    Htb,
-}
-
-impl std::fmt::Display for ShaperKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ShaperKind::None => write!(f, "none"),
-            ShaperKind::Htb => write!(f, "htb"),
-        }
-    }
 }
 
 #[derive(Args, Debug)]
