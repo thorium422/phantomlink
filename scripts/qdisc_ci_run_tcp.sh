@@ -15,6 +15,8 @@
 #   client_tcp_<qdisc>_<cca>.json      iperf3 --json client output
 #   server_tcp_<qdisc>_<cca>.txt
 #   qdisc_tcp_<qdisc>_<cca>_ts.txt     tc snapshots prefixed by t=
+#   pcap_tcp_<qdisc>_<cca>_in.pcap     pre-AQM packet capture (headers only)
+#   pcap_tcp_<qdisc>_<cca>_out.pcap    post-AQM packet capture (headers only)
 #   setup_tcp_<qdisc>_<cca>.log
 #   start_tcp_<qdisc>_<cca>.log
 #   teardown_tcp_<qdisc>_<cca>.log
@@ -45,10 +47,7 @@ PHANTOM=./target/debug/phantomlink
 
 echo "=== tcp_${NAME}  htb-shaper TCP -C $CCA for ${DURATION}s — $QDISC ==="
 
-$PHANTOM setup \
-    --qdisc-client-shaper htb --qdisc-server-shaper htb \
-    -c "$QDISC" -s "$QDISC" \
-    > "$OUTDIR/setup_tcp_$NAME.log" 2>&1
+$PHANTOM setup -c "$QDISC" -s "$QDISC" > "$OUTDIR/setup_tcp_$NAME.log" 2>&1
 
 $PHANTOM start examples/input.csv > "$OUTDIR/start_tcp_$NAME.log" 2>&1 &
 START_PID=$!
@@ -56,6 +55,14 @@ sleep 1
 $PHANTOM exec server iperf3 -s --port 5000 > "$OUTDIR/server_tcp_$NAME.txt" 2>&1 &
 SERVER_PID=$!
 sleep 1
+
+# Header-only pcap on both sides of the AQM. -s 96 keeps each packet to
+# Ethernet+IP+TCP headers (no payload) so artifacts stay manageable across
+# full sweeps; comparing _in vs _out shows what the AQM dropped/marked.
+ip netns exec pl_link tcpdump -i pqueue0_in  -s 96 -n -w "$OUTDIR/pcap_tcp_${NAME}_in.pcap"  >/dev/null 2>&1 &
+TCPDUMP_IN_PID=$!
+ip netns exec pl_link tcpdump -i pqueue0_out -s 96 -n -w "$OUTDIR/pcap_tcp_${NAME}_out.pcap" >/dev/null 2>&1 &
+TCPDUMP_OUT_PID=$!
 
 N_SAMPLES=$(( (DURATION + 2) * 2 ))
 ( for i in $(seq 1 $N_SAMPLES); do
@@ -72,6 +79,7 @@ $PHANTOM exec client iperf3 -c 192.168.66.2 --port 5000 \
 CLIENT_STATUS=$?
 
 kill "$POLL_PID" 2>/dev/null || true
+kill "$TCPDUMP_IN_PID" "$TCPDUMP_OUT_PID" 2>/dev/null || true
 kill "$SERVER_PID" 2>/dev/null || true
 kill -INT "$START_PID" 2>/dev/null || true
 sleep 2

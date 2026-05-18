@@ -5,8 +5,9 @@
 # scripts/qdisc_ci_table.py.
 #
 # Differs from scripts/qdisc_udp_run.sh in that it uses the production
-# --qdisc-client-shaper htb flag rather than hand-rewiring tc. So if a
-# regression breaks the new shaper plumbing, this script catches it.
+# `--qdisc-client`/`--qdisc-server` CLI path (which always builds the HTB+AQM
+# tree) rather than hand-rewiring tc. So if a regression breaks the shaper
+# plumbing, this script catches it.
 #
 # Usage:
 #   sudo ./scripts/qdisc_ci_run.sh <name> "<aqm tc tokens>" [options]
@@ -15,6 +16,16 @@
 #   --duration <s>     iperf3 -t test length (default 20).
 #   --target <bw>      iperf3 -b target offered load (default 200M).
 #   --outdir <dir>     output directory (default /tmp/qdisc_runs).
+#
+# Output (in $OUTDIR):
+#   client_<name>.json      iperf3 --json client output
+#   server_<name>.txt       iperf3 server output
+#   qdisc_<name>_ts.txt     tc -s snapshots prefixed by "=== t=<sec> ==="
+#   pcap_<name>_in.pcap     pre-AQM packet capture (headers only)
+#   pcap_<name>_out.pcap    post-AQM packet capture (headers only)
+#   setup_<name>.log
+#   start_<name>.log
+#   teardown_<name>.log
 
 set -uo pipefail
 
@@ -42,10 +53,7 @@ PHANTOM=./target/debug/phantomlink
 
 echo "=== $NAME  htb-shaper UDP@$TARGET for ${DURATION}s — $QDISC ==="
 
-$PHANTOM setup \
-    --qdisc-client-shaper htb --qdisc-server-shaper htb \
-    -c "$QDISC" -s "$QDISC" \
-    > "$OUTDIR/setup_$NAME.log" 2>&1
+$PHANTOM setup -c "$QDISC" -s "$QDISC" > "$OUTDIR/setup_$NAME.log" 2>&1
 
 $PHANTOM start examples/input.csv > "$OUTDIR/start_$NAME.log" 2>&1 &
 START_PID=$!
@@ -53,6 +61,14 @@ sleep 1
 $PHANTOM exec server iperf3 -s --port 5000 > "$OUTDIR/server_$NAME.txt" 2>&1 &
 SERVER_PID=$!
 sleep 1
+
+# Header-only pcap on both sides of the AQM. -s 96 keeps each packet to
+# Ethernet+IP+TCP/UDP headers (no payload) so artifacts stay manageable
+# across full sweeps; comparing _in vs _out shows what the AQM dropped/marked.
+ip netns exec pl_link tcpdump -i pqueue0_in  -s 96 -n -w "$OUTDIR/pcap_${NAME}_in.pcap"  >/dev/null 2>&1 &
+TCPDUMP_IN_PID=$!
+ip netns exec pl_link tcpdump -i pqueue0_out -s 96 -n -w "$OUTDIR/pcap_${NAME}_out.pcap" >/dev/null 2>&1 &
+TCPDUMP_OUT_PID=$!
 
 # Poll the qdisc state every 0.5 s so the table generator can pick a
 # mid-run sample.
@@ -71,6 +87,7 @@ $PHANTOM exec client iperf3 -c 192.168.66.2 --port 5000 \
 CLIENT_STATUS=$?
 
 kill "$POLL_PID" 2>/dev/null || true
+kill "$TCPDUMP_IN_PID" "$TCPDUMP_OUT_PID" 2>/dev/null || true
 kill "$SERVER_PID" 2>/dev/null || true
 kill -INT "$START_PID" 2>/dev/null || true
 sleep 2
