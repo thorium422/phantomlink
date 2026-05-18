@@ -1,11 +1,5 @@
 name: qdisc-benchmark
 
-# Sweeps phantomlink across every AQM it supports under the new
-# --qdisc-*-shaper htb plumbing (see docs/qdisc-design-rationale.md) and
-# posts the results as a Markdown table to the run summary.
-#
-# Wall time budget per push: ~6-10 minutes (Rust cold build dominates).
-
 on:
   push:
     paths-ignore:
@@ -17,9 +11,6 @@ on:
 permissions:
   contents: read
 
-# A new push to the same ref cancels the prior in-flight benchmark — we only
-# care about the latest commit's numbers, and parallel runs would each pay
-# the cold-build cost.
 concurrency:
   group: qdisc-benchmark-${{ github.ref }}
   cancel-in-progress: true
@@ -32,7 +23,7 @@ jobs:
 
     env:
       DURATION_UDP: "20"   # seconds per AQM in the UDP overload sweep
-      DURATION_TCP: "25"   # seconds per (AQM × CCA) — spans the t=22s route change
+      DURATION_TCP: "25"   # seconds per (AQM + CCA) - spans the t=22s route change
 
     steps:
       - uses: actions/checkout@v4
@@ -85,7 +76,7 @@ jobs:
           DURATION: ${{ env.DURATION_UDP }}
         run: sudo -E env "PATH=$PATH" ./scripts/qdisc_ci_sweep.sh
 
-      - name: Run TCP CCA × AQM sweep
+      - name: Run TCP CCA + AQM sweep
         env:
           DURATION: ${{ env.DURATION_TCP }}
         run: sudo -E env "PATH=$PATH" ./scripts/qdisc_ci_sweep_tcp.sh

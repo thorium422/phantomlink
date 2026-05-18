@@ -39,7 +39,7 @@ pub struct SetupArgs {
     #[arg(
         long = "qdisc-client",
         short = 'c',
-        help = "AQM tokens (e.g. `codel target 5ms`) for the client direction. phantomlink always builds an HTB+AQM tree on pqueue0_in whose rate the scenario engine slaves to the pacer (classless AQMs need this to actually engage — see docs/qdisc-design-rationale.md).",
+        help = "AQM tokens (e.g. `codel target 5ms`) for the client direction. phantomlink always builds an HTB+AQM tree on pqueue0_in whose rate the scenario engine slaves to the pacer.",
         required = false,
         num_args = 1..,
         value_delimiter = ' ',

@@ -1,7 +1,6 @@
 #!/bin/bash
-# Drive scripts/qdisc_ci_run_tcp.sh across every supported (AQM × CCA) pair.
-# Companion to qdisc_ci_sweep.sh (UDP). The matrix is 7 AQMs × 3 CCAs = 21
-# runs, ~10 min of iperf3 time.
+# Drive scripts/qdisc_ci_run_tcp.sh across every supported (AQM + CCA) pair.
+# Companion to qdisc_ci_sweep.sh (UDP).
 #
 # Env overrides:
 #   OUTDIR    output dir (default /tmp/qdisc_runs)

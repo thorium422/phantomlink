@@ -21,9 +21,7 @@ TARGET="${TARGET:-200M}"
 rm -rf "$OUTDIR"
 mkdir -p "$OUTDIR"
 
-# `<run-name>:<tc qdisc tokens>` pairs. Covers the TODO.MD list except for
-# headdrop variants (pfifo_head_drop) and L4S/ECN-only AQMs that need an
-# ECN-capable sender. Tokens mirror the examples in docs/running-qdiscs.md.
+# `<run-name>:<tc qdisc tokens>` pairs.
 QDISCS=(
     "pfifo:pfifo limit 1000"
     "pfifo_head_drop:pfifo_head_drop limit 1000"

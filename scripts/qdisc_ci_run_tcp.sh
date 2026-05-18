@@ -1,9 +1,7 @@
 #!/bin/bash
-# Run one (AQM × TCP congestion-control algorithm) pair through phantomlink
-# with the HTB shaper, mirroring the paper's §4 experiment but cross-cutting
-# every supported AQM. Sibling script to qdisc_ci_run.sh (which does UDP
-# overload); see docs/qdisc-design-rationale.md for why we need the HTB
-# wrapper.
+# Run one (AQM + TCP congestion-control algorithm) pair through phantomlink
+# with the HTB shaper. Sibling script to qdisc_ci_run.sh (which does UDP
+# overload).
 #
 # Usage:
 #   sudo ./scripts/qdisc_ci_run_tcp.sh <qdisc-name> "<aqm tokens>" <cca> [options]

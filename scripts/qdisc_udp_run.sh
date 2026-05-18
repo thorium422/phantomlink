@@ -2,13 +2,6 @@
 # Run a single qdisc against an iperf3 UDP overload, polling `tc -s qdisc show`
 # every 0.5s for the duration of the test.
 #
-# By default wraps the qdisc in HTB at <rate>mbit so that the AQMs from TODO.MD
-# (pfifo, codel, fq_codel, red, pie, fq_pie) actually engage. Pass --no-htb to
-# attach the qdisc directly as root the way phantomlink's --qdisc-client CLI
-# would; in that placement classless AQMs are no-ops because the inner veth has
-# no rate limit and the phantomlink pacer downstream is the real bottleneck.
-# See docs/running-qdiscs.md "Why the starter-recipe AQMs all look identical".
-#
 # Usage:
 #   sudo ./scripts/qdisc_udp_run.sh <name> "<qdisc tokens>" [options]
 #

@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """Walk an output dir produced by qdisc_udp_run.sh and print a result table.
-
 Usage: qdisc_udp_summarize.py [outdir]   (default /tmp/qdisc_runs)
-
-For each `client_<name>.json` it finds, pulls iperf3's lost-percentage and
-joins it with the mid-run (t~15s) tc snapshot from `qdisc_<name>_ts.txt`.
-The AQM under HTB is at the second `qdisc ...` block in each sample; the
-root qdisc (HTB itself) is at the first.
 """
 import json
 import re

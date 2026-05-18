@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """Emit a Markdown table from a /tmp/qdisc_runs/ directory produced by
-scripts/qdisc_ci_sweep.sh. Designed to be appended to $GITHUB_STEP_SUMMARY.
-
-For each `client_<name>.json` we join iperf3's sender/lost stats with the
-mid-run (t~15s) sample from `qdisc_<name>_ts.txt`. The leaf qdisc in that
-sample is the AQM under HTB, so its `backlog`, `dropped`, and AQM-specific
-counters tell us whether the AQM engaged the way it should.
-
+scripts/qdisc_ci_sweep.sh.
 Usage: qdisc_ci_table.py [outdir]   (default /tmp/qdisc_runs)
 """
 import json
@@ -18,15 +12,8 @@ D = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/qdisc_runs")
 clients = sorted(D.glob("client_*.json"))
 
 print("## Qdisc UDP-overload benchmark")
-print()
-print("Each AQM is wrapped in HTB at the scenario's bottleneck rate via the")
-print("`--qdisc-*-shaper htb` CLI flag — see")
-print("[`docs/qdisc-design-rationale.md`](../blob/HEAD/docs/qdisc-design-rationale.md)")
-print("for why classless AQMs need a co-located rate limit. iperf3 offers")
-print("200 Mbps UDP into a scenario whose bottleneck is 80–100 Mbps, so the AQM")
-print("is expected to drop the excess.")
-print()
-print("| qdisc | sender (Mbps) | lost % | pkts | queue @ t≈15s | AQM drops | leaf detail |")
+print("")
+print("| qdisc | sender (Mbps) | lost % | pkts | queue @ t=15s | AQM drops | leaf detail |")
 print("|---|---:|---:|---:|---:|---:|---|")
 
 if not clients:

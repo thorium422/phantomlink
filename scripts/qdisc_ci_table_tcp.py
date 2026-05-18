@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
-"""Emit a Markdown table for the (AQM × CCA) TCP sweep produced by
-scripts/qdisc_ci_sweep_tcp.sh. Designed to be appended to
-$GITHUB_STEP_SUMMARY alongside the UDP table.
-
-For each `client_tcp_<qdisc>_<cca>.json`, we pull goodput (sender +
-receiver), retransmits, and the iperf3-reported min/mean/max RTT. RTT is
-end-to-end through phantomlink, so it folds in the scenario's propagation
-delay and any queueing delay added by the AQM — the two numbers worth
-comparing across CCAs.
-
+"""Emit a Markdown table for the (AQM + CCA) TCP sweep produced by
+scripts/qdisc_ci_sweep_tcp.sh.
 Usage: qdisc_ci_table_tcp.py [outdir]   (default /tmp/qdisc_runs)
 """
 import json
@@ -22,16 +14,8 @@ clients = sorted(D.glob("client_tcp_*.json"))
 # Order CCAs in the table the way the paper compares them.
 CCA_ORDER = ("reno", "cubic", "bbr", "bbr2", "vegas", "htcp")
 
-print("## Congestion-controller × AQM sweep (TCP)")
-print()
-print("Each AQM is wrapped in HTB at the scenario's bottleneck rate via the")
-print("`--qdisc-*-shaper htb` CLI flag — without that wrapper, classless AQMs")
-print("are no-ops in phantomlink's topology")
-print("(see [`docs/qdisc-design-rationale.md`](../blob/HEAD/docs/qdisc-design-rationale.md)).")
-print("iperf3 runs in TCP mode with the listed CCA on the sender; the scenario")
-print("(`examples/input.csv`) goes 100 Mbps / 140 ms → 80 Mbps / 41 ms at t=22 s,")
-print("so a 25 s test covers both regimes.")
-print()
+print("## Congestion-controller + AQM sweep (TCP)")
+print("")
 print("| qdisc | CCA | sender Mbps | receiver Mbps | retransmits | mean RTT (ms) | min/max RTT (ms) |")
 print("|---|---|---:|---:|---:|---:|---:|")
 
